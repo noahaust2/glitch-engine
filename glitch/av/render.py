@@ -176,6 +176,30 @@ def composite(
     render(composited, output_path, codec=codec, crf=crf, audio_bitrate=audio_bitrate)
 
 
+def _quantize_clip(clip: AVClip, target_bpm: float) -> AVClip:
+    """Time-stretch a clip's audio to match target BPM."""
+    from glitch.quantize import quantize
+    clip.audio = quantize(clip.audio, clip.sr, target_bpm=target_bpm)
+    return clip
+
+
+def _auto_detect_target_bpm(clips: list[AVClip]) -> float | None:
+    """Detect BPM of all clips and return the median as the target."""
+    from glitch.quantize import detect_bpm
+    bpms = []
+    for clip in clips:
+        bpm = detect_bpm(clip.audio, clip.sr)
+        bpms.append(bpm)
+        print(f"  Detected BPM: {bpm:.1f}")
+    if not bpms:
+        return None
+    bpms.sort()
+    mid = len(bpms) // 2
+    target = bpms[mid] if len(bpms) % 2 else (bpms[mid - 1] + bpms[mid]) / 2
+    print(f"  Auto-quantize target BPM: {target:.1f}")
+    return target
+
+
 def composite_from_manifest(
     manifest_path: str,
     output_path: str,
@@ -183,6 +207,7 @@ def composite_from_manifest(
     fps: int | None = None,
     global_microsample: dict | None = None,
     preview_s: float | None = None,
+    target_bpm: float | None = None,
 ) -> None:
     """Load a JSON manifest, bond all pairs, optionally micro-sample, and render.
 
@@ -193,6 +218,8 @@ def composite_from_manifest(
         fps: Override fps (default: from manifest).
         global_microsample: Global micro-sample params applied to all pairs.
         preview_s: If set, only render first N seconds.
+        target_bpm: If set, quantize all clips to this BPM. If None,
+            uses manifest-level "bpm" field. If also absent, auto-detects.
     """
     from glitch.av.bond import bond
     from glitch.av.microsample import microsample
@@ -203,6 +230,7 @@ def composite_from_manifest(
     base_dir = str(Path(manifest_path).parent)
     res = tuple(manifest.get("resolution", [1920, 1080]))
     manifest_fps = manifest.get("fps", 30)
+    manifest_bpm = manifest.get("bpm")
 
     if resolution is not None:
         res = resolution
@@ -223,12 +251,17 @@ def composite_from_manifest(
 
         clip = bond(audio_path, visual_path, resolution=res, fps=manifest_fps)
 
+        # Auto-quantize: per-pair > manifest-level > CLI target
+        pair_bpm = pair.get("bpm")
+        bpm = pair_bpm or manifest_bpm or target_bpm
+        if bpm is not None:
+            clip = _quantize_clip(clip, bpm)
+
         # Apply micro-sampling
         ms_params = pair.get("microsample")
         if ms_params is None and global_microsample:
             ms_params = global_microsample
         if ms_params:
-            # Remove 'effects' from params to handle separately
             ms_params = dict(ms_params)
             clip, _ = microsample(clip, **ms_params)
 
@@ -243,6 +276,14 @@ def composite_from_manifest(
     if not clips:
         raise ValueError("No valid pairs found in manifest")
 
+    # If no BPM was specified anywhere, auto-detect from all clips
+    if target_bpm is None and manifest_bpm is None:
+        all_clips = [c for c, _ in clips]
+        if len(all_clips) > 1:
+            auto_bpm = _auto_detect_target_bpm(all_clips)
+            if auto_bpm is not None:
+                clips = [(_quantize_clip(c, auto_bpm), off) for c, off in clips]
+
     duration = preview_s if preview_s else None
     composite(clips, output_path, duration_s=duration, resolution=res, fps=manifest_fps)
 
@@ -254,6 +295,7 @@ def composite_from_folder(
     fps: int = 30,
     global_microsample: dict | None = None,
     preview_s: float | None = None,
+    target_bpm: float | None = None,
 ) -> None:
     """Convenience: auto-generate manifest from folder structure and composite.
 
@@ -265,6 +307,10 @@ def composite_from_folder(
           name2/
             sample.wav
             001.png, 002.png, ...
+
+    Args:
+        target_bpm: If set, quantize all clips to this BPM.
+            If None, auto-detects dominant BPM when there are multiple clips.
     """
     from glitch.av.bond import bond
     from glitch.av.microsample import microsample
@@ -325,6 +371,15 @@ def composite_from_folder(
 
     if not clips:
         raise ValueError(f"No valid pairs found in {folder_path}")
+
+    # Auto-quantize: if target specified, use it; otherwise auto-detect
+    if target_bpm is not None:
+        clips = [(_quantize_clip(c, target_bpm), off) for c, off in clips]
+    elif len(clips) > 1:
+        all_clips = [c for c, _ in clips]
+        auto_bpm = _auto_detect_target_bpm(all_clips)
+        if auto_bpm is not None:
+            clips = [(_quantize_clip(c, auto_bpm), off) for c, off in clips]
 
     duration = preview_s if preview_s else None
     composite(clips, output_path, duration_s=duration, resolution=resolution, fps=fps)

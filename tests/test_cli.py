@@ -87,10 +87,22 @@ class TestCLI:
         assert args.audio == "sample.wav"
         assert args.visual == "visual.png"
 
+    def test_render_bpm(self):
+        parser = build_parser()
+        args = parser.parse_args(["render", "sample.wav", "visual.png",
+                                   "-o", "output.mp4", "--bpm", "140"])
+        assert args.bpm == 140.0
+
     def test_compose_args(self):
         parser = build_parser()
         args = parser.parse_args(["compose", "manifest.json", "-o", "track.mp4"])
         assert args.command == "compose"
+
+    def test_compose_bpm(self):
+        parser = build_parser()
+        args = parser.parse_args(["compose", "my_track/", "-o", "out.mp4",
+                                   "--bpm", "160"])
+        assert args.bpm == 160.0
 
     def test_cutlist_args(self):
         parser = build_parser()

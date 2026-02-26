@@ -451,6 +451,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resolution", type=str, default="1920x1080",
                     help="Output resolution WxH")
     p.add_argument("--fps", type=int, default=30)
+    p.add_argument("--bpm", type=float, default=None,
+                    help="Quantize audio to target BPM before rendering")
     _add_microsample_args(p)
     _add_output_arg(p)
     _add_seed_arg(p)
@@ -461,6 +463,9 @@ def build_parser() -> argparse.ArgumentParser:
         from glitch.av.render import render as av_render
         w, h = [int(x) for x in args.resolution.split("x")]
         clip = bond(args.audio, args.visual, resolution=(w, h), fps=args.fps)
+        if args.bpm is not None:
+            from glitch.quantize import quantize as qt
+            clip.audio = qt(clip.audio, clip.sr, target_bpm=args.bpm)
         ms_kwargs = _get_microsample_kwargs(args)
         if ms_kwargs.get("slice_ms") or ms_kwargs.get("slice_min_ms") or _has_microsample_args(args):
             clip, cut_list = microsample(clip, **ms_kwargs)
@@ -474,6 +479,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("source", help="Manifest JSON or folder path")
     p.add_argument("--resolution", type=str, default=None)
     p.add_argument("--fps", type=int, default=None)
+    p.add_argument("--bpm", type=float, default=None,
+                    help="Quantize all clips to target BPM (auto-detects if omitted)")
     p.add_argument("--preview", type=float, default=None,
                     help="Preview first N seconds")
     _add_microsample_args(p)
@@ -497,6 +504,7 @@ def build_parser() -> argparse.ArgumentParser:
                 resolution=res, fps=args.fps,
                 global_microsample=global_ms,
                 preview_s=args.preview,
+                target_bpm=args.bpm,
             )
         else:
             composite_from_folder(
@@ -505,6 +513,7 @@ def build_parser() -> argparse.ArgumentParser:
                 fps=args.fps or 30,
                 global_microsample=global_ms,
                 preview_s=args.preview,
+                target_bpm=args.bpm,
             )
         print(f"Composed -> {args.output}")
 
@@ -518,16 +527,20 @@ def build_parser() -> argparse.ArgumentParser:
     def cmd_manifest(args):
         import json as _json
         from pathlib import Path
+        from glitch.core import load as load_audio
+        from glitch.quantize import detect_bpm
         folder = Path(args.folder)
         pairs = []
         for subdir in sorted(folder.iterdir()):
             if not subdir.is_dir():
                 continue
             audio_path = None
+            audio_abs = None
             for ext in [".wav", ".flac", ".mp3"]:
                 candidate = subdir / f"sample{ext}"
                 if candidate.exists():
                     audio_path = str(candidate.relative_to(folder))
+                    audio_abs = str(candidate)
                     break
             if not audio_path:
                 continue
@@ -543,11 +556,20 @@ def build_parser() -> argparse.ArgumentParser:
                 if imgs:
                     visual_path = str(subdir.relative_to(folder))
             if visual_path:
+                # Detect BPM for each clip
+                bpm = None
+                try:
+                    audio_data, sr = load_audio(audio_abs)
+                    bpm = round(detect_bpm(audio_data, sr), 1)
+                    print(f"  {audio_path}: {bpm} BPM")
+                except Exception:
+                    pass
                 pairs.append({
                     "audio": audio_path,
                     "visual": visual_path,
                     "offset": 0.0,
                     "gain_db": 0.0,
+                    "bpm": bpm,
                     "microsample": None,
                 })
         manifest = {

@@ -226,6 +226,9 @@ glitch render sample.wav clip.mp4 -o output.mp4
 
 # Custom resolution and framerate
 glitch render sample.wav photo.png --resolution 1280x720 --fps 24 -o output.mp4
+
+# Quantize audio to target BPM before rendering
+glitch render sample.wav photo.png --bpm 140 -o output.mp4
 ```
 
 ### `glitch render` with Micro-Sampling
@@ -290,7 +293,11 @@ my_track/
 
 Then:
 ```bash
+# Auto-quantizes all clips to the dominant BPM
 glitch compose my_track/ -o track.mp4
+
+# Force all clips to 140 BPM
+glitch compose my_track/ -o track.mp4 --bpm 140
 
 # With global micro-sampling applied to everything
 glitch compose my_track/ -o track.mp4 --shuffle 0.4 --stutter 0.2
@@ -316,18 +323,21 @@ Manifest format:
   "title": "my_track",
   "resolution": [1920, 1080],
   "fps": 30,
+  "bpm": 140,
   "pairs": [
     {
       "audio": "kick/sample.wav",
       "visual": "kick/visual.png",
       "offset": 0.0,
       "gain_db": 0.0,
+      "bpm": null,
       "microsample": null
     },
     {
       "audio": "break/sample.wav",
       "visual": "break/",
       "offset": 2.5,
+      "bpm": 160,
       "microsample": {
         "slice_ms": 40,
         "shuffle_chance": 0.6,
@@ -341,9 +351,13 @@ Manifest format:
 }
 ```
 
+- `bpm` (top-level) — quantize all clips to this BPM (auto-detected if omitted)
+- `bpm` (per-pair) — override target BPM for this specific clip
 - `offset` — when this clip starts in seconds
 - `gain_db` — volume adjustment in dB (0 = no change)
 - `microsample` — per-clip micro-sample settings (null = no processing)
+
+BPM priority: per-pair `bpm` > manifest-level `bpm` > CLI `--bpm` > auto-detect
 
 ### `glitch cutlist` — Export Cut Lists
 

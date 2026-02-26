@@ -82,8 +82,11 @@ glitch render sample.wav frames/ -o output.mp4 \
 # Compose full track from JSON manifest
 glitch compose manifest.json -o track.mp4
 
-# Compose from folder structure
+# Compose from folder structure (auto-quantizes all clips to dominant BPM)
 glitch compose track_folder/ -o track.mp4
+
+# Compose with explicit target BPM (all clips stretched to 140)
+glitch compose track_folder/ -o track.mp4 --bpm 140
 
 # Compose with global micro-sample settings
 glitch compose track_folder/ -o track.mp4 --shuffle 0.4 --stutter 0.2
