@@ -152,3 +152,16 @@ class TestChainParsing:
         assert args.output == "out.wav"
         parsed_ops = _parse_chain_ops(ops)
         assert parsed_ops[0]["slice_ms"] == 40
+
+    def test_per_op_seed_not_swallowed(self):
+        """Per-op --seed inside --op blocks should stay with the op."""
+        argv = ["chain", "input.wav",
+                "--op", "microsample", "--slice", "50", "--seed", "11",
+                "--op", "microsample", "--stutter", "0.6", "--seed", "22",
+                "-o", "out.wav"]
+        clean, ops = _extract_chain_ops(argv)
+        assert "-o" in clean
+        parsed = _parse_chain_ops(ops)
+        assert len(parsed) == 2
+        assert parsed[0]["seed"] == 11
+        assert parsed[1]["seed"] == 22

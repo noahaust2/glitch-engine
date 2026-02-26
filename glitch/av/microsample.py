@@ -78,7 +78,7 @@ def microsample(
         (output AVClip, CutList)
     """
     rng = np.random.default_rng(seed)
-    actual_seed = seed if seed is not None else rng.integers(0, 2**31)
+    actual_seed = seed if seed is not None else int(rng.integers(0, 2**31))
 
     frames = _materialize_frames(clip)
     audio = clip.audio
@@ -226,6 +226,8 @@ def _compute_boundaries(
 ) -> list[int]:
     """Compute slice boundaries based on mode."""
     audio_len = len(audio) if audio.ndim == 1 else audio.shape[0]
+    if audio_len == 0:
+        return [0]
 
     if mode == "transients":
         mono = audio if audio.ndim == 1 else librosa.to_mono(audio.T)

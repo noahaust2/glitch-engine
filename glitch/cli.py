@@ -599,7 +599,7 @@ def _extract_chain_ops(argv: list[str]) -> tuple[list[str], list[str]]:
             in_ops = True
             i += 1
             continue
-        if in_ops and argv[i] in ("-o", "--output", "-seed", "--seed"):
+        if in_ops and argv[i] in ("-o", "--output"):
             in_ops = False
         if in_ops:
             ops.append(argv[i])

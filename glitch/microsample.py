@@ -52,6 +52,8 @@ def _compute_boundaries(
 ) -> list[int]:
     """Compute slice boundaries based on mode."""
     audio_len = len(audio) if audio.ndim == 1 else audio.shape[0]
+    if audio_len == 0:
+        return [0]
 
     if mode == "transients":
         mono = audio if audio.ndim == 1 else librosa.to_mono(audio.T)

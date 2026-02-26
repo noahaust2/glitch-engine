@@ -100,6 +100,15 @@ class TestMicrosample:
         assert len(loaded.cuts) == len(cl.cuts)
         assert loaded.seed == cl.seed
 
+    def test_cutlist_serialization_default_seed(self, simple_clip, tmp_path):
+        """Regression: default seed (None) must produce JSON-serializable int."""
+        _, cl = microsample(simple_clip)
+        assert isinstance(cl.seed, int)
+        path = str(tmp_path / "cuts.json")
+        cl.save(path)
+        loaded = CutList.load(path)
+        assert loaded.seed == cl.seed
+
 
 class TestApplyCutList:
     def test_basic(self, simple_clip):
