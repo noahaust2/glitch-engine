@@ -45,7 +45,7 @@ def microsample(
     slice_ms: float | None = None,
     slice_min_ms: float | None = None,
     slice_max_ms: float | None = None,
-    mode: str = "fixed",
+    mode: str = "transients",
     shuffle_chance: float = 0.3,
     stutter_chance: float = 0.2,
     max_repeats: int = 4,

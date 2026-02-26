@@ -49,7 +49,7 @@ glitch microsample drums.wav --slice 40 --shuffle 0.6 -o out.wav --cutlist cuts.
 **Key parameters:**
 - `--slice N` — fixed slice length in milliseconds (default: 50)
 - `--slice-min` / `--slice-max` — random slice length range (use with `--mode random`)
-- `--mode fixed|transients|random` — how to determine cut points
+- `--mode fixed|transients|random` — how to determine cut points (default: transients)
 - `--shuffle 0.0-1.0` — probability of moving a slice to a random position
 - `--stutter 0.0-1.0` — probability of repeating a slice
 - `--max-repeats N` — maximum stutter repetitions (default: 4)
@@ -260,7 +260,7 @@ glitch render texture.wav frames/ -o output.mp4 \
 **Micro-sample parameters:**
 - `--slice N` — fixed slice length in milliseconds
 - `--slice-min` / `--slice-max` — random slice length range (use with `--mode random`)
-- `--mode fixed|transients|random` — how to determine cut points
+- `--mode fixed|transients|random` — how to determine cut points (default: transients)
 - `--shuffle 0.0-1.0` — probability of moving a slice to a random position
 - `--stutter 0.0-1.0` — probability of repeating a slice
 - `--max-repeats N` — maximum repetitions

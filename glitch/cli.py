@@ -22,7 +22,7 @@ def _add_microsample_audio_args(p):
     p.add_argument("--slice", type=float, default=None, help="Fixed slice length ms")
     p.add_argument("--slice-min", type=float, default=None)
     p.add_argument("--slice-max", type=float, default=None)
-    p.add_argument("--mode", choices=["fixed", "transients", "random"], default="fixed")
+    p.add_argument("--mode", choices=["fixed", "transients", "random"], default="transients")
     p.add_argument("--shuffle", type=float, default=0.3)
     p.add_argument("--stutter", type=float, default=0.2)
     p.add_argument("--max-repeats", type=int, default=4)
@@ -398,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--slice", type=float, default=None, help="Fixed slice length ms")
         p.add_argument("--slice-min", type=float, default=None)
         p.add_argument("--slice-max", type=float, default=None)
-        p.add_argument("--mode", choices=["fixed", "transients", "random"], default="fixed")
+        p.add_argument("--mode", choices=["fixed", "transients", "random"], default="transients")
         p.add_argument("--shuffle", type=float, default=0.3)
         p.add_argument("--stutter", type=float, default=0.2)
         p.add_argument("--max-repeats", type=int, default=4)
@@ -440,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
             getattr(args, "max_repeats", 4) != 4,
             getattr(args, "reverse", 0.15) != 0.15,
             getattr(args, "drop", 0.05) != 0.05,
-            getattr(args, "mode", "fixed") != "fixed",
+            getattr(args, "mode", "transients") != "transients",
             bool(getattr(args, "effects", None)),
         ])
 
