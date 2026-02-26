@@ -13,3 +13,4 @@ venv/
 *.mp3
 *.mp4
 .env
+.claude/

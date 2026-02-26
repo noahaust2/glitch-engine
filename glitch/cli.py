@@ -319,6 +319,209 @@ def build_parser() -> argparse.ArgumentParser:
     _add_seed_arg(p)
     p.set_defaults(func=cmd_mix)
 
+    # ===== Phase 2: AV subcommands =====
+
+    def _add_microsample_args(p):
+        p.add_argument("--slice", type=float, default=None, help="Fixed slice length ms")
+        p.add_argument("--slice-min", type=float, default=None)
+        p.add_argument("--slice-max", type=float, default=None)
+        p.add_argument("--mode", choices=["fixed", "transients", "random"], default="fixed")
+        p.add_argument("--shuffle", type=float, default=0.3)
+        p.add_argument("--stutter", type=float, default=0.2)
+        p.add_argument("--max-repeats", type=int, default=4)
+        p.add_argument("--reverse", type=float, default=0.15)
+        p.add_argument("--drop", type=float, default=0.05)
+        p.add_argument("--effects", nargs="*", default=None,
+                        choices=["rgb_split", "scan_lines", "corrupt",
+                                 "invert_region", "posterize", "noise"])
+        p.add_argument("--effect-chance", type=float, default=0.3)
+
+    def _get_microsample_kwargs(args):
+        kwargs = {}
+        if args.slice is not None:
+            kwargs["slice_ms"] = args.slice
+        if args.slice_min is not None:
+            kwargs["slice_min_ms"] = args.slice_min
+        if args.slice_max is not None:
+            kwargs["slice_max_ms"] = args.slice_max
+        kwargs["mode"] = args.mode
+        kwargs["shuffle_chance"] = args.shuffle
+        kwargs["stutter_chance"] = args.stutter
+        kwargs["max_repeats"] = args.max_repeats
+        kwargs["reverse_chance"] = args.reverse
+        kwargs["drop_chance"] = args.drop
+        if args.effects:
+            kwargs["effects"] = args.effects
+            kwargs["effect_chance"] = args.effect_chance
+        if hasattr(args, "seed") and args.seed is not None:
+            kwargs["seed"] = args.seed
+        return kwargs
+
+    def _has_microsample_args(args):
+        return any([
+            args.slice is not None,
+            args.slice_min is not None,
+            getattr(args, "stutter", 0.2) != 0.2,
+            getattr(args, "shuffle", 0.3) != 0.3,
+        ])
+
+    # --- render ---
+    p = subparsers.add_parser("render", help="Bond audio+visual and render to .mp4")
+    p.add_argument("audio", help="Input audio file")
+    p.add_argument("visual", help="Image, image directory, or video file")
+    p.add_argument("--resolution", type=str, default="1920x1080",
+                    help="Output resolution WxH")
+    p.add_argument("--fps", type=int, default=30)
+    _add_microsample_args(p)
+    _add_output_arg(p)
+    _add_seed_arg(p)
+
+    def cmd_render(args):
+        from glitch.av.bond import bond
+        from glitch.av.microsample import microsample
+        from glitch.av.render import render as av_render
+        w, h = [int(x) for x in args.resolution.split("x")]
+        clip = bond(args.audio, args.visual, resolution=(w, h), fps=args.fps)
+        ms_kwargs = _get_microsample_kwargs(args)
+        if ms_kwargs.get("slice_ms") or ms_kwargs.get("slice_min_ms") or _has_microsample_args(args):
+            clip, cut_list = microsample(clip, **ms_kwargs)
+        av_render(clip, args.output)
+        print(f"Rendered -> {args.output}")
+
+    p.set_defaults(func=cmd_render)
+
+    # --- compose ---
+    p = subparsers.add_parser("compose", help="Compose from manifest or folder")
+    p.add_argument("source", help="Manifest JSON or folder path")
+    p.add_argument("--resolution", type=str, default=None)
+    p.add_argument("--fps", type=int, default=None)
+    p.add_argument("--preview", type=float, default=None,
+                    help="Preview first N seconds")
+    _add_microsample_args(p)
+    _add_output_arg(p)
+    _add_seed_arg(p)
+
+    def cmd_compose(args):
+        import os
+        from glitch.av.render import composite_from_manifest, composite_from_folder
+        res = None
+        if args.resolution:
+            w, h = [int(x) for x in args.resolution.split("x")]
+            res = (w, h)
+
+        ms_kwargs = _get_microsample_kwargs(args)
+        global_ms = ms_kwargs if _has_microsample_args(args) else None
+
+        if os.path.isfile(args.source) and args.source.endswith(".json"):
+            composite_from_manifest(
+                args.source, args.output,
+                resolution=res, fps=args.fps,
+                global_microsample=global_ms,
+                preview_s=args.preview,
+            )
+        else:
+            composite_from_folder(
+                args.source, args.output,
+                resolution=res or (1920, 1080),
+                fps=args.fps or 30,
+                global_microsample=global_ms,
+                preview_s=args.preview,
+            )
+        print(f"Composed -> {args.output}")
+
+    p.set_defaults(func=cmd_compose)
+
+    # --- manifest ---
+    p = subparsers.add_parser("manifest", help="Generate manifest from folder")
+    p.add_argument("folder", help="Folder containing subfolders with samples + visuals")
+    _add_output_arg(p)
+
+    def cmd_manifest(args):
+        import json as _json
+        from pathlib import Path
+        folder = Path(args.folder)
+        pairs = []
+        for subdir in sorted(folder.iterdir()):
+            if not subdir.is_dir():
+                continue
+            audio_path = None
+            for ext in [".wav", ".flac", ".mp3"]:
+                candidate = subdir / f"sample{ext}"
+                if candidate.exists():
+                    audio_path = str(candidate.relative_to(folder))
+                    break
+            if not audio_path:
+                continue
+            visual_path = None
+            for name in ["visual.png", "visual.jpg", "visual.mp4"]:
+                candidate = subdir / name
+                if candidate.exists():
+                    visual_path = str(candidate.relative_to(folder))
+                    break
+            if visual_path is None:
+                imgs = [f for f in subdir.iterdir()
+                        if f.suffix.lower() in {".png", ".jpg", ".jpeg"}]
+                if imgs:
+                    visual_path = str(subdir.relative_to(folder))
+            if visual_path:
+                pairs.append({
+                    "audio": audio_path,
+                    "visual": visual_path,
+                    "offset": 0.0,
+                    "gain_db": 0.0,
+                    "microsample": None,
+                })
+        manifest = {
+            "title": folder.name,
+            "resolution": [1920, 1080],
+            "fps": 30,
+            "pairs": pairs,
+        }
+        with open(args.output, "w") as f:
+            _json.dump(manifest, f, indent=2)
+        print(f"Manifest ({len(pairs)} pairs) -> {args.output}")
+
+    p.set_defaults(func=cmd_manifest)
+
+    # --- cutlist ---
+    p = subparsers.add_parser("cutlist", help="Generate and export a cut list")
+    p.add_argument("audio", help="Input audio file")
+    p.add_argument("visual", help="Visual media")
+    _add_microsample_args(p)
+    _add_output_arg(p)
+    _add_seed_arg(p)
+
+    def cmd_cutlist(args):
+        from glitch.av.bond import bond
+        from glitch.av.microsample import microsample
+        clip = bond(args.audio, args.visual)
+        ms_kwargs = _get_microsample_kwargs(args)
+        _, cut_list = microsample(clip, **ms_kwargs)
+        cut_list.save(args.output)
+        print(f"Cut list ({len(cut_list.cuts)} cuts) -> {args.output}")
+
+    p.set_defaults(func=cmd_cutlist)
+
+    # --- apply ---
+    p = subparsers.add_parser("apply", help="Apply saved cut list to new material")
+    p.add_argument("cutlist_path", help="Path to cut list JSON")
+    p.add_argument("audio", help="Input audio file")
+    p.add_argument("visual", help="Visual media")
+    _add_output_arg(p)
+
+    def cmd_apply(args):
+        from glitch.av.bond import bond
+        from glitch.av.microsample import apply_cut_list
+        from glitch.av.render import render as av_render
+        from glitch.av.core import CutList
+        clip = bond(args.audio, args.visual)
+        cut_list = CutList.load(args.cutlist_path)
+        result = apply_cut_list(clip, cut_list)
+        av_render(result, args.output)
+        print(f"Applied cut list -> {args.output}")
+
+    p.set_defaults(func=cmd_apply)
+
     return parser
 
 
