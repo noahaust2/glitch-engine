@@ -1,14 +1,20 @@
-"""AVClip dataclass, CutList, and shared AV utilities."""
+"""AVClip dataclass and shared AV utilities.
+
+Cut and CutList are imported from glitch.cutlist (the shared data model
+used by both audio-only and AV micro-sampling).
+"""
 
 from __future__ import annotations
 
-import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
+# Re-export from shared module so existing imports still work
+from glitch.cutlist import Cut, CutList
 
 
 @dataclass
@@ -59,66 +65,6 @@ class LazyFrameList:
     def materialize(self) -> list[np.ndarray]:
         """Expand to actual list of frames (for operations needing random write)."""
         return [self._frame.copy() for _ in range(self._count)]
-
-
-@dataclass
-class Cut:
-    """A single micro-sampling operation record."""
-    source_start_s: float
-    source_end_s: float
-    dest_start_s: float
-    repeats: int = 1
-    reversed: bool = False
-    dropped: bool = False
-
-    def to_dict(self) -> dict:
-        return {
-            "source_start_s": float(self.source_start_s),
-            "source_end_s": float(self.source_end_s),
-            "dest_start_s": float(self.dest_start_s),
-            "repeats": int(self.repeats),
-            "reversed": bool(self.reversed),
-            "dropped": bool(self.dropped),
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> Cut:
-        return cls(**d)
-
-
-@dataclass
-class CutList:
-    """Complete log of all micro-sampling operations."""
-    cuts: list[Cut] = field(default_factory=list)
-    seed: int = 0
-    source_duration_s: float = 0.0
-    output_duration_s: float = 0.0
-
-    def to_dict(self) -> dict:
-        return {
-            "cuts": [c.to_dict() for c in self.cuts],
-            "seed": self.seed,
-            "source_duration_s": self.source_duration_s,
-            "output_duration_s": self.output_duration_s,
-        }
-
-    def save(self, path: str) -> None:
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> CutList:
-        return cls(
-            cuts=[Cut.from_dict(c) for c in d["cuts"]],
-            seed=d.get("seed", 0),
-            source_duration_s=d.get("source_duration_s", 0.0),
-            output_duration_s=d.get("output_duration_s", 0.0),
-        )
-
-    @classmethod
-    def load(cls, path: str) -> CutList:
-        with open(path) as f:
-            return cls.from_dict(json.load(f))
 
 
 # --- Utility functions ---

@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="glitch-engine",
-    version="0.2.0",
-    description="Procedural sampling & glitch engine for IDM audiovisual production",
+    version="0.3.0",
+    description="Procedural micro-sampling & glitch engine for IDM audiovisual production",
     packages=find_packages(),
     python_requires=">=3.10",
     install_requires=[

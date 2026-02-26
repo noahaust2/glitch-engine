@@ -17,67 +17,57 @@ def _add_output_arg(parser):
                         help="Output file path")
 
 
-def cmd_granular(args):
-    """Run granular scatter on input audio."""
-    from glitch.granular import scatter
+def _add_microsample_audio_args(p):
+    """Add micro-sampling arguments for audio-only commands."""
+    p.add_argument("--slice", type=float, default=None, help="Fixed slice length ms")
+    p.add_argument("--slice-min", type=float, default=None)
+    p.add_argument("--slice-max", type=float, default=None)
+    p.add_argument("--mode", choices=["fixed", "transients", "random"], default="fixed")
+    p.add_argument("--shuffle", type=float, default=0.3)
+    p.add_argument("--stutter", type=float, default=0.2)
+    p.add_argument("--max-repeats", type=int, default=4)
+    p.add_argument("--reverse", type=float, default=0.1)
+    p.add_argument("--drop", type=float, default=0.1)
+
+
+def _get_audio_microsample_kwargs(args):
+    """Extract microsample kwargs from parsed args."""
+    kwargs = {}
+    if args.slice is not None:
+        kwargs["slice_ms"] = args.slice
+    if args.slice_min is not None:
+        kwargs["slice_min_ms"] = args.slice_min
+    if args.slice_max is not None:
+        kwargs["slice_max_ms"] = args.slice_max
+    kwargs["mode"] = args.mode
+    kwargs["shuffle_chance"] = args.shuffle
+    kwargs["stutter_chance"] = args.stutter
+    kwargs["max_repeats"] = args.max_repeats
+    kwargs["reverse_chance"] = args.reverse
+    kwargs["drop_chance"] = args.drop
+    if hasattr(args, "seed") and args.seed is not None:
+        kwargs["seed"] = args.seed
+    return kwargs
+
+
+def cmd_microsample(args):
+    """Micro-sample audio: slice, shuffle, stutter, reverse, drop."""
+    from glitch.microsample import microsample
     audio, sr = load(args.input)
-    result = scatter(
-        audio, sr,
-        grain_min_ms=args.grain_min,
-        grain_max_ms=args.grain_max,
-        num_grains=args.grains,
-        density=args.density,
-        pitch_drift=args.pitch,
-        spread=args.spread,
-        envelope_shape=args.envelope,
-        output_duration_s=args.duration,
-        seed=args.seed,
-    )
+    kwargs = _get_audio_microsample_kwargs(args)
+    result, cut_list = microsample(audio, sr, **kwargs)
     save(args.output, normalize(result), sr)
-    print(f"Granular scatter -> {args.output}")
-
-
-def cmd_cloud(args):
-    """Run granular cloud on input audio."""
-    from glitch.granular import cloud
-    audio, sr = load(args.input)
-    result = cloud(
-        audio, sr,
-        grain_min_ms=args.grain_min,
-        grain_max_ms=args.grain_max,
-        density=args.density,
-        pitch_drift=args.pitch,
-        spread=args.spread,
-        output_duration_s=args.duration,
-        seed=args.seed,
-    )
-    save(args.output, normalize(result), sr)
-    print(f"Granular cloud -> {args.output}")
-
-
-def cmd_stutter(args):
-    """Run stutter/glitch effect on input audio."""
-    from glitch.stutter import glitch
-    audio, sr = load(args.input)
-    result = glitch(
-        audio, sr,
-        stutter_chance=args.chance,
-        max_repeats=args.repeats,
-        reverse_chance=args.reverse,
-        crush_chance=args.crush,
-        crush_bits=args.bits,
-        preserve_length=not args.no_preserve,
-        seed=args.seed,
-    )
-    save(args.output, normalize(result), sr)
-    print(f"Stutter glitch -> {args.output}")
+    if args.cutlist:
+        cut_list.save(args.cutlist)
+        print(f"Cut list ({len(cut_list.cuts)} cuts) -> {args.cutlist}")
+    print(f"Microsample -> {args.output}")
 
 
 def cmd_chop(args):
-    """Run chop/shuffle on input audio."""
-    from glitch.stutter import chop
+    """Chop and shuffle audio slices."""
+    from glitch.microsample import chop
     audio, sr = load(args.input)
-    result = chop(
+    result, cut_list = chop(
         audio, sr,
         slices=args.slices,
         reverse_chance=args.reverse,
@@ -85,7 +75,84 @@ def cmd_chop(args):
         seed=args.seed,
     )
     save(args.output, normalize(result), sr)
+    if args.cutlist:
+        cut_list.save(args.cutlist)
+        print(f"Cut list ({len(cut_list.cuts)} cuts) -> {args.cutlist}")
     print(f"Chop -> {args.output}")
+
+
+def cmd_apply_audio(args):
+    """Apply a saved cut list to audio."""
+    from glitch.cutlist import CutList, apply_cut_list
+    audio, sr = load(args.audio)
+    cut_list = CutList.load(args.cutlist_path)
+    result = apply_cut_list(audio, sr, cut_list)
+    save(args.output, normalize(result), sr)
+    print(f"Applied cut list -> {args.output}")
+
+
+def cmd_chain(args):
+    """Chain multiple micro-sampling passes."""
+    from glitch.microsample import chain as ms_chain
+    audio, sr = load(args.input)
+    # Parse operations from --op flags
+    ops = _parse_chain_ops(args.ops)
+    result, cut_lists = ms_chain(audio, sr, ops)
+    save(args.output, normalize(result), sr)
+    print(f"Chain ({len(cut_lists)} passes) -> {args.output}")
+
+
+def _parse_chain_ops(ops_flat: list[str]) -> list[dict]:
+    """Parse flat list of --op arguments into list of param dicts."""
+    operations = []
+    current = {}
+    for item in ops_flat:
+        if item == "microsample":
+            if current:
+                operations.append(current)
+            current = {}
+        elif item.startswith("--"):
+            key = item.lstrip("-").replace("-", "_")
+            # Next item should be the value, but we handle it via argparse
+            current["_key"] = key
+        else:
+            if "_key" in current:
+                key = current.pop("_key")
+                try:
+                    val = float(item)
+                    if val == int(val) and "." not in item:
+                        val = int(item)
+                except ValueError:
+                    val = item
+                current[key] = val
+
+    if current:
+        # Remove any stray _key
+        current.pop("_key", None)
+        operations.append(current)
+
+    # Map CLI param names to function param names
+    param_map = {
+        "slice": "slice_ms",
+        "shuffle": "shuffle_chance",
+        "stutter": "stutter_chance",
+        "max_repeats": "max_repeats",
+        "reverse": "reverse_chance",
+        "drop": "drop_chance",
+        "slice_min": "slice_min_ms",
+        "slice_max": "slice_max_ms",
+        "mode": "mode",
+        "seed": "seed",
+    }
+    result = []
+    for op in operations:
+        mapped = {}
+        for k, v in op.items():
+            mapped_key = param_map.get(k, k)
+            mapped[mapped_key] = v
+        result.append(mapped)
+
+    return result if result else [{}]
 
 
 def cmd_spectral(args):
@@ -199,63 +266,72 @@ def cmd_mix(args):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="glitch",
-        description="Procedural sampling & glitch engine for IDM production",
+        description="Procedural micro-sampling & glitch engine for IDM production",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # --- granular ---
-    p = subparsers.add_parser("granular", help="Granular scatter synthesis")
+    # --- microsample ---
+    p = subparsers.add_parser("microsample", help="Micro-sample audio (slice, shuffle, stutter, reverse, drop)")
     p.add_argument("input", help="Input audio file")
-    p.add_argument("-grains", "--grains", type=int, default=None)
-    p.add_argument("-density", "--density", type=float, default=None)
-    p.add_argument("-grain-min", "--grain-min", type=float, default=10.0)
-    p.add_argument("-grain-max", "--grain-max", type=float, default=80.0)
-    p.add_argument("-pitch", "--pitch", type=float, default=0.0,
-                    help="Max pitch drift in semitones")
-    p.add_argument("-spread", "--spread", type=float, default=0.5)
-    p.add_argument("-envelope", "--envelope", default="hann",
-                    choices=["hann", "triangle", "tukey", "random"])
-    p.add_argument("-duration", "--duration", type=float, default=None,
-                    help="Output duration in seconds")
+    _add_microsample_audio_args(p)
+    p.add_argument("--cutlist", type=str, default=None,
+                    help="Export cut list to JSON (for Phase 2 video sync)")
     _add_output_arg(p)
     _add_seed_arg(p)
-    p.set_defaults(func=cmd_granular)
-
-    # --- cloud ---
-    p = subparsers.add_parser("cloud", help="Dense granular cloud texture")
-    p.add_argument("input", help="Input audio file")
-    p.add_argument("-density", "--density", type=float, default=500.0)
-    p.add_argument("-grain-min", "--grain-min", type=float, default=1.0)
-    p.add_argument("-grain-max", "--grain-max", type=float, default=10.0)
-    p.add_argument("-pitch", "--pitch", type=float, default=12.0)
-    p.add_argument("-spread", "--spread", type=float, default=1.0)
-    p.add_argument("-duration", "--duration", type=float, default=None)
-    _add_output_arg(p)
-    _add_seed_arg(p)
-    p.set_defaults(func=cmd_cloud)
-
-    # --- stutter ---
-    p = subparsers.add_parser("stutter", help="Stutter/glitch effect")
-    p.add_argument("input", help="Input audio file")
-    p.add_argument("-chance", "--chance", type=float, default=0.4)
-    p.add_argument("-repeats", "--repeats", type=int, default=4)
-    p.add_argument("-reverse", "--reverse", type=float, default=0.2)
-    p.add_argument("-crush", "--crush", type=float, default=0.1)
-    p.add_argument("-bits", "--bits", type=int, default=8)
-    p.add_argument("--no-preserve", action="store_true")
-    _add_output_arg(p)
-    _add_seed_arg(p)
-    p.set_defaults(func=cmd_stutter)
+    p.set_defaults(func=cmd_microsample)
 
     # --- chop ---
-    p = subparsers.add_parser("chop", help="Chop and shuffle audio slices")
+    p = subparsers.add_parser("chop", help="Chop and shuffle audio slices (shortcut for microsample)")
     p.add_argument("input", help="Input audio file")
     p.add_argument("-slices", "--slices", type=int, default=16)
     p.add_argument("-reverse", "--reverse", type=float, default=0.2)
     p.add_argument("-drop", "--drop", type=float, default=0.1)
+    p.add_argument("--cutlist", type=str, default=None,
+                    help="Export cut list to JSON")
     _add_output_arg(p)
     _add_seed_arg(p)
     p.set_defaults(func=cmd_chop)
+
+    # --- apply (audio-only) ---
+    p = subparsers.add_parser("apply", help="Apply saved cut list to audio or AV material")
+    p.add_argument("cutlist_path", help="Path to cut list JSON")
+    p.add_argument("audio", help="Input audio file")
+    p.add_argument("visual", nargs="?", default=None, help="Visual media (optional, for AV mode)")
+    _add_output_arg(p)
+
+    def cmd_apply(args):
+        if args.visual:
+            from glitch.av.bond import bond
+            from glitch.av.microsample import apply_cut_list as av_apply
+            from glitch.av.render import render as av_render
+            from glitch.cutlist import CutList
+            clip = bond(args.audio, args.visual)
+            cut_list = CutList.load(args.cutlist_path)
+            result = av_apply(clip, cut_list)
+            av_render(result, args.output)
+            print(f"Applied cut list (AV) -> {args.output}")
+        else:
+            cmd_apply_audio(args)
+
+    p.set_defaults(func=cmd_apply)
+
+    # --- chain ---
+    p = subparsers.add_parser("chain", help="Chain multiple micro-sampling passes")
+    p.add_argument("input", help="Input audio file")
+    p.add_argument("--op", dest="ops", action="append", nargs=argparse.REMAINDER,
+                    help="Micro-sample operation (repeat for multiple passes)")
+    _add_output_arg(p)
+    _add_seed_arg(p)
+
+    def _cmd_chain_wrapper(args):
+        flat_ops = []
+        if args.ops:
+            for op_list in args.ops:
+                flat_ops.extend(op_list)
+        args.ops = flat_ops
+        cmd_chain(args)
+
+    p.set_defaults(func=_cmd_chain_wrapper)
 
     # --- spectral ---
     p = subparsers.add_parser("spectral", help="Spectral smear processing")
@@ -484,7 +560,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_manifest)
 
     # --- cutlist ---
-    p = subparsers.add_parser("cutlist", help="Generate and export a cut list")
+    p = subparsers.add_parser("cutlist", help="Generate and export a cut list from AV material")
     p.add_argument("audio", help="Input audio file")
     p.add_argument("visual", help="Visual media")
     _add_microsample_args(p)
@@ -493,34 +569,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     def cmd_cutlist(args):
         from glitch.av.bond import bond
-        from glitch.av.microsample import microsample
+        from glitch.av.microsample import microsample as av_microsample
         clip = bond(args.audio, args.visual)
         ms_kwargs = _get_microsample_kwargs(args)
-        _, cut_list = microsample(clip, **ms_kwargs)
+        _, cut_list = av_microsample(clip, **ms_kwargs)
         cut_list.save(args.output)
         print(f"Cut list ({len(cut_list.cuts)} cuts) -> {args.output}")
 
     p.set_defaults(func=cmd_cutlist)
-
-    # --- apply ---
-    p = subparsers.add_parser("apply", help="Apply saved cut list to new material")
-    p.add_argument("cutlist_path", help="Path to cut list JSON")
-    p.add_argument("audio", help="Input audio file")
-    p.add_argument("visual", help="Visual media")
-    _add_output_arg(p)
-
-    def cmd_apply(args):
-        from glitch.av.bond import bond
-        from glitch.av.microsample import apply_cut_list
-        from glitch.av.render import render as av_render
-        from glitch.av.core import CutList
-        clip = bond(args.audio, args.visual)
-        cut_list = CutList.load(args.cutlist_path)
-        result = apply_cut_list(clip, cut_list)
-        av_render(result, args.output)
-        print(f"Applied cut list -> {args.output}")
-
-    p.set_defaults(func=cmd_apply)
 
     return parser
 
