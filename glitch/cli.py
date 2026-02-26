@@ -95,43 +95,21 @@ def cmd_chain(args):
     """Chain multiple micro-sampling passes."""
     from glitch.microsample import chain as ms_chain
     audio, sr = load(args.input)
-    # Parse operations from --op flags
     ops = _parse_chain_ops(args.ops)
     result, cut_lists = ms_chain(audio, sr, ops)
     save(args.output, normalize(result), sr)
     print(f"Chain ({len(cut_lists)} passes) -> {args.output}")
 
 
-def _parse_chain_ops(ops_flat: list[str]) -> list[dict]:
-    """Parse flat list of --op arguments into list of param dicts."""
-    operations = []
-    current = {}
-    for item in ops_flat:
-        if item == "microsample":
-            if current:
-                operations.append(current)
-            current = {}
-        elif item.startswith("--"):
-            key = item.lstrip("-").replace("-", "_")
-            # Next item should be the value, but we handle it via argparse
-            current["_key"] = key
-        else:
-            if "_key" in current:
-                key = current.pop("_key")
-                try:
-                    val = float(item)
-                    if val == int(val) and "." not in item:
-                        val = int(item)
-                except ValueError:
-                    val = item
-                current[key] = val
+def _parse_chain_ops(ops_tokens: list[str]) -> list[dict]:
+    """Parse flat token list from chain --op into list of param dicts.
 
-    if current:
-        # Remove any stray _key
-        current.pop("_key", None)
-        operations.append(current)
+    Tokens arrive as e.g.:
+      ["microsample", "--slice", "50", "--shuffle", "0.4",
+       "microsample", "--stutter", "0.6", "--max-repeats", "8"]
 
-    # Map CLI param names to function param names
+    Each "microsample" keyword starts a new operation.
+    """
     param_map = {
         "slice": "slice_ms",
         "shuffle": "shuffle_chance",
@@ -144,13 +122,43 @@ def _parse_chain_ops(ops_flat: list[str]) -> list[dict]:
         "mode": "mode",
         "seed": "seed",
     }
+
+    if not ops_tokens:
+        return [{}]
+
+    # Split tokens into groups at each "microsample" keyword
+    groups: list[list[str]] = []
+    for token in ops_tokens:
+        if token == "microsample":
+            groups.append([])
+        elif groups:
+            groups[-1].append(token)
+
+    if not groups:
+        return [{}]
+
     result = []
-    for op in operations:
-        mapped = {}
-        for k, v in op.items():
-            mapped_key = param_map.get(k, k)
-            mapped[mapped_key] = v
-        result.append(mapped)
+    for group in groups:
+        params = {}
+        i = 0
+        while i < len(group):
+            token = group[i]
+            if token.startswith("--"):
+                key = token.lstrip("-").replace("-", "_")
+                if i + 1 < len(group) and not group[i + 1].startswith("--"):
+                    raw = group[i + 1]
+                    try:
+                        val = float(raw)
+                        if val == int(val) and "." not in raw:
+                            val = int(raw)
+                    except ValueError:
+                        val = raw
+                    mapped = param_map.get(key, key)
+                    params[mapped] = val
+                    i += 2
+                    continue
+            i += 1
+        result.append(params)
 
     return result if result else [{}]
 
@@ -318,20 +326,9 @@ def build_parser() -> argparse.ArgumentParser:
     # --- chain ---
     p = subparsers.add_parser("chain", help="Chain multiple micro-sampling passes")
     p.add_argument("input", help="Input audio file")
-    p.add_argument("--op", dest="ops", action="append", nargs=argparse.REMAINDER,
-                    help="Micro-sample operation (repeat for multiple passes)")
     _add_output_arg(p)
     _add_seed_arg(p)
-
-    def _cmd_chain_wrapper(args):
-        flat_ops = []
-        if args.ops:
-            for op_list in args.ops:
-                flat_ops.extend(op_list)
-        args.ops = flat_ops
-        cmd_chain(args)
-
-    p.set_defaults(func=_cmd_chain_wrapper)
+    p.set_defaults(func=cmd_chain)
 
     # --- spectral ---
     p = subparsers.add_parser("spectral", help="Spectral smear processing")
@@ -437,8 +434,14 @@ def build_parser() -> argparse.ArgumentParser:
         return any([
             args.slice is not None,
             args.slice_min is not None,
-            getattr(args, "stutter", 0.2) != 0.2,
+            args.slice_max is not None,
             getattr(args, "shuffle", 0.3) != 0.3,
+            getattr(args, "stutter", 0.2) != 0.2,
+            getattr(args, "max_repeats", 4) != 4,
+            getattr(args, "reverse", 0.15) != 0.15,
+            getattr(args, "drop", 0.05) != 0.05,
+            getattr(args, "mode", "fixed") != "fixed",
+            bool(getattr(args, "effects", None)),
         ])
 
     # --- render ---
@@ -581,13 +584,48 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _extract_chain_ops(argv: list[str]) -> tuple[list[str], list[str]]:
+    """For `chain` command, split argv into argparse-safe args and --op tokens.
+
+    Returns (clean_argv, op_tokens) where clean_argv has --op blocks removed
+    and op_tokens is the flat list of tokens from all --op blocks.
+    """
+    clean = []
+    ops = []
+    i = 0
+    in_ops = False
+    while i < len(argv):
+        if argv[i] == "--op":
+            in_ops = True
+            i += 1
+            continue
+        if in_ops and argv[i] in ("-o", "--output", "-seed", "--seed"):
+            in_ops = False
+        if in_ops:
+            ops.append(argv[i])
+        else:
+            clean.append(argv[i])
+        i += 1
+    return clean, ops
+
+
 def main():
+    raw_argv = sys.argv[1:]
+
+    # For chain: extract --op tokens before argparse sees them
+    op_tokens = []
+    if len(raw_argv) >= 1 and raw_argv[0] == "chain":
+        raw_argv, op_tokens = _extract_chain_ops(raw_argv)
+
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(raw_argv)
 
     if args.command is None:
         parser.print_help()
         sys.exit(1)
+
+    if args.command == "chain":
+        args.ops = op_tokens
 
     args.func(args)
 
