@@ -275,20 +275,28 @@ Compose a full track from multiple audio+visual pairs using a manifest or folder
 
 **From a folder:**
 
-Set up your folder like this:
+Each subfolder is one clip. Subfolder names can be anything — they're processed in alphabetical order, and each clip plays after the previous one finishes.
+
+Rules:
+- **Audio**: must be named `sample.wav` (also accepts `.flac`, `.mp3`, `.ogg`)
+- **Visual** (pick one per subfolder):
+  - A file named `visual.png` / `visual.jpg` / `visual.mp4` / `visual.mov` — used as a still image or video clip
+  - Or numbered images (`001.png`, `002.png`, etc.) — treated as an image sequence where images switch at audio transients
+- Subfolders without a `sample.*` audio file are skipped with a warning
+
 ```
 my_track/
   kick/
-    sample.wav
-    visual.png
+    sample.wav           # audio (required, must be named "sample")
+    visual.png           # still image held for full audio duration
   break/
     sample.wav
-    001.png
+    001.png              # image sequence — switches at transients
     002.png
     003.png
   texture/
     sample.wav
-    visual.mp4
+    visual.mp4           # video clip — trimmed/looped to match audio
 ```
 
 Then:

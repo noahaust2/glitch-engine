@@ -124,19 +124,32 @@ glitch compose my_track/ -o final.mp4
 
 ## Folder Structure Convention
 
+Each subfolder is one clip. Subfolder name can be anything — they're processed alphabetically.
+
+**Audio** must be named `sample` with one of these extensions: `.wav`, `.flac`, `.mp3`, `.ogg`
+
+**Visual** is auto-detected in this order:
+1. A file named `visual.png`, `visual.jpg`, `visual.mp4`, or `visual.mov` — bonded as a still image or video
+2. If no `visual.*` file exists, any numbered images (`.png`/`.jpg`) in the folder are treated as an image sequence
+
 ```
-track/
+my_track/
   kick/
-    sample.wav
-    visual.png           # single image -> bonded as still
+    sample.wav           # audio (required, must be named "sample")
+    visual.png           # single image -> held for full duration
   break/
     sample.wav
-    001.png              # image sequence -> bonded at transients
+    001.png              # image sequence -> images switch at transients
     002.png
     003.png
   texture/
     sample.wav
-    visual.mp4           # video clip -> bonded directly
+    visual.mp4           # video clip -> trimmed/looped to match audio
+```
+
+Then compose:
+```bash
+glitch compose my_track/ -o track.mp4
 ```
 
 ## Python API
