@@ -1,14 +1,35 @@
 # glitch-engine User Guide
 
-## What This Is
+## What Is This?
 
-A command-line toolkit for making glitchy, generative IDM music and visuals. You feed it audio files (and optionally images/video), and it spits out processed, destroyed, rearranged versions. Everything is randomized — run the same command twice and you get two different (but aesthetically related) results.
+A command-line tool for making glitchy electronic music and visuals. You give it audio files and images/video, it chops them up, rearranges the pieces, and spits out glitched results. Every run is different — it's a generative instrument, not a precise editor.
 
-There are two layers:
-1. **Audio processing** — micro-sampling (slice/shuffle/stutter/reverse/drop), spectral mangling, sequencing
-2. **Visual engine** — bond audio to visuals, then micro-sample both in perfect sync
+## What Does It Actually Do?
 
-The core paradigm is **micro-sampling**: slicing audio into tiny pieces and rearranging them. Every operation is a discrete, non-overlapping cut. This is critical because every audio cut also applies identically to synchronized video via cut lists.
+The main thing: **micro-sampling**. It slices your audio into tiny pieces (by default, it cuts at the drum hits / transients), then randomly:
+- **Shuffles** them (moves pieces to different positions)
+- **Stutters** them (repeats a piece 2-8 times, like a CD skip)
+- **Reverses** some pieces
+- **Drops** some pieces (replaces with silence)
+
+If you give it video or images too, the video gets cut at the exact same points as the audio. Audio and video always stay in sync.
+
+## What Should I Feed It?
+
+**Audio loops work best** for the compose workflow. When you're building a track from multiple clips, the tool detects each loop's BPM and time-stretches them to match. This only works if the audio has a detectable tempo — so loops and phrases, not one-shot hits.
+
+You can still micro-sample a one-shot hit (it'll slice and stutter it), but the auto-quantize BPM matching won't do anything useful with a single kick drum sample.
+
+**Think of it like this:** each clip you give it should be a musical phrase or loop. A 4-bar drum pattern. An 8-bar synth line. A vocal phrase. The tool sequences these one after another and time-stretches them to a common BPM.
+
+If you want a 4/4 kick pattern, you'd use the **step sequencer** to build one first:
+
+```bash
+# Build a kick pattern: 140 BPM, 16 steps per bar, 8 bars long
+glitch pattern kick.wav -bpm 140 -steps 16 -bars 8 -o kick_pattern.wav
+```
+
+Then use that `kick_pattern.wav` as one of your clips in the compose workflow.
 
 ---
 
@@ -19,313 +40,107 @@ cd glitch-engine
 pip install -e .
 ```
 
-You now have a `glitch` command available everywhere. You also need **ffmpeg** installed on your system for video rendering (the `render` and `compose` commands).
+You now have a `glitch` command. You also need **ffmpeg** installed for video rendering.
 
 ---
 
-## Audio Commands
+## The Full Workflow: Making a Track
 
-### `glitch microsample` — The Primary Instrument
+Here's what an actual session looks like, start to finish.
 
-Slices your audio into tiny pieces and processes each slice with probabilistic decisions: shuffle (move to random position), stutter (repeat N times), reverse, or drop (replace with silence). Every decision is logged to a **cut list** that can be saved and reused.
+### 1. Gather your raw materials
 
-```bash
-# Basic: 40ms slices, moderate shuffle and stutter
-glitch microsample drums.wav --slice 40 --shuffle 0.5 --stutter 0.3 -o out.wav
+You need audio files. These can be:
+- Drum loops you recorded or sampled
+- Synth loops from a DAW export
+- Field recordings, vocal snippets, whatever
 
-# Heavy glitch: high shuffle, lots of stuttering
-glitch microsample vocals.wav --slice 30 --shuffle 0.8 --stutter 0.6 --max-repeats 8 -o destroyed.wav
+If you want video output, you also need visuals — images, image sequences, or video clips.
 
-# Transient-based slicing (cuts at drum hits)
-glitch microsample breakbeat.wav --mode transients --shuffle 0.6 --stutter 0.3 -o glitched.wav
+### 2. (Optional) Process individual sounds first
 
-# Random slice lengths
-glitch microsample texture.wav --mode random --slice-min 20 --slice-max 100 --shuffle 0.5 -o varied.wav
-
-# Export the cut list for reuse in Phase 2 (video sync)
-glitch microsample drums.wav --slice 40 --shuffle 0.6 -o out.wav --cutlist cuts.json
-```
-
-**Key parameters:**
-- `--slice N` — fixed slice length in milliseconds (default: 50)
-- `--slice-min` / `--slice-max` — random slice length range (use with `--mode random`)
-- `--mode fixed|transients|random` — how to determine cut points (default: transients)
-- `--shuffle 0.0-1.0` — probability of moving a slice to a random position
-- `--stutter 0.0-1.0` — probability of repeating a slice
-- `--max-repeats N` — maximum stutter repetitions (default: 4)
-- `--reverse 0.0-1.0` — probability of reversing a slice
-- `--drop 0.0-1.0` — probability of dropping a slice (silence)
-- `--cutlist path.json` — export cut list for Phase 2 video sync
-
-### `glitch chop` — Chop & Shuffle
-
-Convenience shortcut: evenly slices the audio into N pieces and shuffles them like a deck of cards. Some slices can be reversed or dropped.
+Before composing, you might want to glitch individual sounds:
 
 ```bash
-glitch chop breakbeat.wav -slices 16 -o shuffled.wav
-glitch chop vocals.wav -slices 32 --reverse 0.3 --drop 0.2 -o chopped.wav
+# Chop up a breakbeat
+glitch microsample amen_break.wav --shuffle 0.8 --stutter 0.4 -o chopped_break.wav
+
+# Make a ghostly pad from a vocal sample
+glitch spectral vocal.wav -blur 0.7 -phase 0.9 -o ghost_vocal.wav
+
+# Build a kick pattern from a single kick hit
+glitch pattern kick.wav -bpm 140 -steps 16 -bars 8 -o kick_loop.wav
+
+# Build a full beat from individual hits
+glitch pattern kick.wav snare.wav hat.wav -bpm 140 -steps 16 -bars 8 -o beat.wav
 ```
 
-### `glitch apply` — Apply Cut Lists
+### 3. Set up your track folder
 
-Apply a previously saved cut list to different audio. The same sequence of cuts (which slices, how many repeats, reversed or not) gets applied to new material.
+Create a folder. Inside it, make one subfolder per clip. Each subfolder needs:
+- An audio file named `sample.wav` (or `.flac`, `.mp3`, `.ogg`)
+- A visual file (optional, for video output)
 
-```bash
-glitch apply cuts.json different_drums.wav -o recut.wav
-```
-
-### `glitch chain` — Chain Multiple Passes
-
-Apply multiple micro-sampling passes in one command. Each `--op` starts a new pass with its own parameters.
-
-```bash
-glitch chain input.wav \
-  --op microsample --slice 50 --shuffle 0.4 \
-  --op microsample --stutter 0.6 --max-repeats 8 \
-  -o out.wav
-```
-
-### `glitch spectral` — Spectral Smear
-
-FFT-based processing. Randomizes phase, blurs the frequency spectrum, freezes frames. Produces metallic, underwater, ghostly textures.
-
-```bash
-# Ghostly wash
-glitch spectral piano.wav -phase 0.8 -blur 0.5 -o ghost.wav
-
-# Spectral freeze (frames repeat)
-glitch spectral drums.wav -freeze 0.5 -phase 0.3 -o frozen.wav
-
-# Full underwater
-glitch spectral vocals.wav -phase 1.0 -blur 0.8 -freeze 0.3 -o underwater.wav
-```
-
-**Key parameters:**
-- `-phase 0.0-1.0` — how much to randomize the phase spectrum (0 = original, 1 = fully random)
-- `-blur 0.0-1.0` — how much to smooth the magnitude spectrum
-- `-freeze 0.0-1.0` — probability of reusing the previous frame's spectrum
-
-### `glitch mangle` — Spectral Destruction
-
-More aggressive than `spectral`. Swaps frequency bins between frames, zeros out random bands, multiplies by noise.
-
-```bash
-glitch mangle synth.wav -swap 0.5 -zero 0.3 -noise 0.8 -o mangled.wav
-```
-
-### `glitch quantize` — BPM Detection & Time-Stretch
-
-```bash
-# Just detect BPM
-glitch quantize breakbeat.wav --detect-only -o dummy.wav
-
-# Stretch to target BPM
-glitch quantize breakbeat.wav -bpm 140 -o at_140.wav
-
-# Specify source BPM (skip auto-detection)
-glitch quantize sample.wav -bpm 160 -source-bpm 120 -o faster.wav
-```
-
-### `glitch sequence` — Probabilistic Arranger
-
-Takes multiple audio files and arranges them on a timeline with probabilistic placement. Creates sparse, textural compositions with intentional silence.
-
-```bash
-glitch sequence kick.wav snare.wav hat.wav texture.wav \
-  -duration 60 -density 0.5 -cluster 0.3 -layers 3 -o arrangement.wav
-```
-
-**Key parameters:**
-- `-duration N` — output length in seconds
-- `-density 0.0-1.0` — how much of the timeline is filled
-- `-cluster 0.0-1.0` — tendency for events to bunch together
-- `-layers N` — max simultaneous overlapping stems
-
-### `glitch pattern` — Step Sequencer
-
-Probabilistic step sequencer. Assigns stems to a grid and triggers them by probability.
-
-```bash
-glitch pattern kick.wav snare.wav hat.wav \
-  -bpm 140 -steps 16 -bars 8 -swing 0.2 -o beat.wav
-```
-
-### `glitch mix` — Mix Stems
-
-Simple: sum multiple audio files together and normalize.
-
-```bash
-glitch mix drums.wav bass.wav melody.wav -o mixdown.wav
-```
-
----
-
-## Chaining
-
-Every audio command takes a file in and writes a file out. Chain them:
-
-```bash
-# Step 1: Micro-sample a breakbeat
-glitch microsample break.wav --slice 40 --shuffle 0.9 --stutter 0.4 --seed 42 -o step1.wav
-
-# Step 2: Spectral smear the result
-glitch spectral step1.wav -blur 0.6 -phase 0.9 -freeze 0.3 -o step2.wav
-
-# Step 3: Micro-sample again (double-glitch)
-glitch microsample step2.wav --slice 20 --stutter 0.7 --max-repeats 8 -o final.wav
-```
-
-Or use the `chain` command for multiple passes in one go:
-
-```bash
-glitch chain break.wav \
-  --op microsample --slice 40 --shuffle 0.9 --stutter 0.4 \
-  --op microsample --slice 20 --stutter 0.7 --max-repeats 8 \
-  -o final.wav
-```
-
-Or use the Python API for tighter control:
-
-```python
-from glitch import load, save, normalize, microsample
-from glitch.spectral import smear
-
-audio, sr = load("break.wav")
-audio, cl1 = microsample(audio, sr, slice_ms=40, shuffle_chance=0.9, stutter_chance=0.4, seed=42)
-audio = smear(audio, sr, blur=0.6, phase_randomize=0.9, freeze_chance=0.3)
-audio, cl2 = microsample(audio, sr, slice_ms=20, stutter_chance=0.7, max_repeats=8)
-save("final.wav", normalize(audio), sr)
-```
-
----
-
-## Visual Commands
-
-### The Concept: Bond → Destroy
-
-Every visual starts by being **bonded** to audio. After bonding, audio and video are a single unit. All processing applies identically to both.
-
-Three bonding modes (auto-detected):
-1. **Still image** → the image is held for the entire audio duration
-2. **Image sequence** (a folder of images) → images switch at musically meaningful transient points
-3. **Video clip** → trimmed/looped to match the audio length
-
-### `glitch render` — Bond + Render
-
-The simplest AV command. Bond audio to a visual and render to .mp4.
-
-```bash
-# Still image (image held for full duration)
-glitch render sample.wav photo.png -o output.mp4
-
-# Image sequence (images switch at transients)
-glitch render sample.wav frames_folder/ -o output.mp4
-
-# Video clip (trimmed/looped to match audio)
-glitch render sample.wav clip.mp4 -o output.mp4
-
-# Custom resolution and framerate
-glitch render sample.wav photo.png --resolution 1280x720 --fps 24 -o output.mp4
-
-# Quantize audio to target BPM before rendering
-glitch render sample.wav photo.png --bpm 140 -o output.mp4
-```
-
-### `glitch render` with Micro-Sampling
-
-Add `--slice`, `--shuffle`, `--stutter`, `--reverse`, `--drop` flags to micro-sample the bonded clip. Both audio and video are cut identically.
-
-```bash
-# Mild glitch
-glitch render sample.wav frames/ -o output.mp4 \
-  --slice 100 --shuffle 0.3 --stutter 0.2
-
-# Heavy destruction
-glitch render sample.wav frames/ -o output.mp4 \
-  --slice 30 --shuffle 0.8 --stutter 0.5 --reverse 0.4 --drop 0.1
-
-# With visual effects (rgb split, scan lines, etc.)
-glitch render sample.wav photo.png -o output.mp4 \
-  --slice 50 --shuffle 0.5 --effects rgb_split scan_lines --effect-chance 0.4
-
-# Transient-based slicing (cuts at drum hits)
-glitch render drums.wav frames/ -o output.mp4 \
-  --mode transients --shuffle 0.6 --stutter 0.3
-
-# Random slice lengths
-glitch render texture.wav frames/ -o output.mp4 \
-  --mode random --slice-min 20 --slice-max 150 --shuffle 0.5
-```
-
-**Micro-sample parameters:**
-- `--slice N` — fixed slice length in milliseconds
-- `--slice-min` / `--slice-max` — random slice length range (use with `--mode random`)
-- `--mode fixed|transients|random` — how to determine cut points (default: transients)
-- `--shuffle 0.0-1.0` — probability of moving a slice to a random position
-- `--stutter 0.0-1.0` — probability of repeating a slice
-- `--max-repeats N` — maximum repetitions
-- `--reverse 0.0-1.0` — probability of reversing a slice
-- `--drop 0.0-1.0` — probability of replacing a slice with silence + black
-- `--effects [names]` — visual effects: `rgb_split`, `scan_lines`, `corrupt`, `invert_region`, `posterize`, `noise`
-- `--effect-chance 0.0-1.0` — probability of applying effects to each frame
-
-### `glitch compose` — Multi-Clip Composition
-
-Compose a full track from multiple audio+visual pairs using a manifest or folder.
-
-**From a folder:**
-
-Each subfolder is one clip. Subfolder names can be anything — they're processed in alphabetical order, and each clip plays after the previous one finishes.
-
-Rules:
-- **Audio**: must be named `sample.wav` (also accepts `.flac`, `.mp3`, `.ogg`)
-- **Visual** (pick one per subfolder):
-  - A file named `visual.png` / `visual.jpg` / `visual.mp4` / `visual.mov` — used as a still image or video clip
-  - Or numbered images (`001.png`, `002.png`, etc.) — treated as an image sequence where images switch at audio transients
-- Subfolders without a `sample.*` audio file are skipped with a warning
+The subfolders play in alphabetical order — name them `01_kick`, `02_break`, etc. to control the sequence.
 
 ```
 my_track/
-  kick/
-    sample.wav           # audio (required, must be named "sample")
-    visual.png           # still image held for full audio duration
-  break/
-    sample.wav
-    001.png              # image sequence — switches at transients
+  01_kick/
+    sample.wav              <-- your kick loop or pattern
+    visual.png              <-- a still image (must be named "visual")
+  02_break/
+    sample.wav              <-- a chopped breakbeat
+    001.png                 <-- numbered images switch at drum hits
     002.png
     003.png
-  texture/
-    sample.wav
-    visual.mp4           # video clip — trimmed/looped to match audio
+  03_texture/
+    sample.wav              <-- a synth texture or pad
+    visual.mp4              <-- a video clip (must be named "visual")
 ```
 
-Then:
-```bash
-# Auto-quantizes all clips to the dominant BPM
-glitch compose my_track/ -o track.mp4
+**Naming rules:**
+- Audio MUST be called `sample` (with any common audio extension)
+- For a still image or video: name it `visual.png`, `visual.jpg`, `visual.mp4`, or `visual.mov`
+- For an image sequence: use numbered filenames like `001.png`, `002.png` (do NOT name them "visual")
+- Subfolders without `sample.*` get skipped
 
-# Force all clips to 140 BPM
+### 4. Compose
+
+```bash
+glitch compose my_track/ -o track.mp4
+```
+
+What happens:
+1. Each subfolder becomes one clip
+2. The tool detects each clip's BPM
+3. All clips get time-stretched to match the dominant BPM (your source files are NOT modified — this happens in memory only)
+4. Clips play one after another in alphabetical subfolder order
+5. Everything renders to a single .mp4
+
+**Options:**
+
+```bash
+# Force all clips to 140 BPM instead of auto-detecting
 glitch compose my_track/ -o track.mp4 --bpm 140
 
-# With global micro-sampling applied to everything
+# Apply micro-sampling to everything during composition
 glitch compose my_track/ -o track.mp4 --shuffle 0.4 --stutter 0.2
 
-# Preview first 10 seconds
+# Preview just the first 10 seconds (fast iteration)
 glitch compose my_track/ -o preview.mp4 --preview 10
 ```
 
-**From a JSON manifest** (more control):
+### 5. (Optional) Fine-tune with a manifest
+
+For more control (overlapping clips, volume adjustments, per-clip glitch settings):
 
 ```bash
-# Generate a manifest template from your folder
+# Generate a starting manifest from your folder
 glitch manifest my_track/ -o manifest.json
-
-# Edit manifest.json to set offsets, gains, per-clip microsample settings
-# Then render:
-glitch compose manifest.json -o track.mp4
 ```
 
-Manifest format:
+Open `manifest.json` in a text editor. It looks like this:
+
 ```json
 {
   "title": "my_track",
@@ -334,134 +149,250 @@ Manifest format:
   "bpm": 140,
   "pairs": [
     {
-      "audio": "kick/sample.wav",
-      "visual": "kick/visual.png",
+      "audio": "01_kick/sample.wav",
+      "visual": "01_kick/visual.png",
       "offset": 0.0,
       "gain_db": 0.0,
       "bpm": null,
       "microsample": null
     },
     {
-      "audio": "break/sample.wav",
-      "visual": "break/",
-      "offset": 2.5,
-      "bpm": 160,
+      "audio": "02_break/sample.wav",
+      "visual": "02_break/",
+      "offset": 4.0,
+      "gain_db": -3.0,
       "microsample": {
         "slice_ms": 40,
         "shuffle_chance": 0.6,
-        "stutter_chance": 0.3,
-        "max_repeats": 4,
-        "reverse_chance": 0.2,
-        "seed": 42
+        "stutter_chance": 0.3
       }
     }
   ]
 }
 ```
 
-- `bpm` (top-level) — quantize all clips to this BPM (auto-detected if omitted)
-- `bpm` (per-pair) — override target BPM for this specific clip
-- `offset` — when this clip starts in seconds
-- `gain_db` — volume adjustment in dB (0 = no change)
-- `microsample` — per-clip micro-sample settings (null = no processing)
+What you can tweak:
+- **`offset`** — when this clip starts (in seconds). Set different offsets to overlap clips.
+- **`gain_db`** — volume adjustment. 0 = unchanged, -6 = half volume, +6 = double
+- **`bpm`** (top-level) — target BPM for all clips. Remove it for auto-detection.
+- **`bpm`** (per-pair) — override BPM for one specific clip
+- **`microsample`** — per-clip glitch settings (null = no glitching)
 
-BPM priority: per-pair `bpm` > manifest-level `bpm` > CLI `--bpm` > auto-detect
-
-### `glitch cutlist` — Export Cut Lists
-
-Generate a cut list without rendering. Useful for finding a good set of cuts, saving them, and reusing them.
+Then compose from the manifest:
 
 ```bash
-glitch cutlist drums.wav frames/ --slice 30 --shuffle 0.5 --seed 42 -o cuts.json
+glitch compose manifest.json -o track.mp4
+```
+
+---
+
+## Audio Commands Reference
+
+### `glitch microsample` — The Main Tool
+
+Slices audio at transients (drum hits) and rearranges the pieces.
+
+```bash
+# Basic: shuffle pieces around
+glitch microsample drums.wav --shuffle 0.6 -o out.wav
+
+# Heavy: lots of stuttering, some reversal
+glitch microsample drums.wav --shuffle 0.8 --stutter 0.5 --reverse 0.3 -o destroyed.wav
+
+# Fixed-size slices instead of transient-based
+glitch microsample texture.wav --mode fixed --slice 40 --shuffle 0.5 -o out.wav
+
+# Random slice sizes
+glitch microsample texture.wav --mode random --slice-min 20 --slice-max 100 --shuffle 0.5 -o out.wav
+
+# Save the cut list for later reuse
+glitch microsample drums.wav --shuffle 0.6 -o out.wav --cutlist cuts.json
+```
+
+**Parameters:**
+- `--mode` — where to cut: `transients` (default, cuts at drum hits), `fixed` (even intervals), `random` (variable lengths)
+- `--slice N` — slice length in ms (used with `fixed` mode, default: 50)
+- `--slice-min` / `--slice-max` — range for `random` mode
+- `--shuffle 0.0-1.0` — chance of moving a piece to a random position (0 = in order, 1 = fully scrambled)
+- `--stutter 0.0-1.0` — chance of repeating a piece
+- `--max-repeats N` — max stutter repetitions (default: 4)
+- `--reverse 0.0-1.0` — chance of playing a piece backwards
+- `--drop 0.0-1.0` — chance of replacing a piece with silence
+- `--cutlist path.json` — save the cut decisions to a file
+
+### `glitch chop` — Quick Shuffle
+
+Chops audio into N equal pieces and shuffles them like a deck of cards.
+
+```bash
+glitch chop breakbeat.wav --slices 16 -o shuffled.wav
+glitch chop vocals.wav --slices 32 --reverse 0.3 --drop 0.2 -o chopped.wav
+```
+
+### `glitch spectral` — Ghostly Textures
+
+FFT-based processing. Makes things sound metallic, underwater, ghostly.
+
+```bash
+glitch spectral piano.wav -phase 0.8 -blur 0.5 -o ghost.wav
+glitch spectral vocals.wav -phase 1.0 -blur 0.8 -freeze 0.3 -o underwater.wav
+```
+
+- `-phase 0.0-1.0` — randomize phase (0 = original, 1 = fully smeared)
+- `-blur 0.0-1.0` — smooth the frequency spectrum
+- `-freeze 0.0-1.0` — chance of reusing the previous frame's spectrum
+
+### `glitch mangle` — Heavy Destruction
+
+More aggressive than spectral. Swaps frequencies, zeros out bands, multiplies by noise.
+
+```bash
+glitch mangle synth.wav -swap 0.5 -zero 0.3 -noise 0.8 -o mangled.wav
+```
+
+### `glitch quantize` — BPM Detection & Time-Stretch
+
+```bash
+glitch quantize breakbeat.wav --detect-only -o dummy.wav    # just print the BPM
+glitch quantize breakbeat.wav -bpm 140 -o stretched.wav      # stretch to 140 BPM
+```
+
+### `glitch pattern` — Step Sequencer
+
+Build beat patterns from one-shot samples. This is how you turn individual hits into loops.
+
+```bash
+# Basic 4/4 kick
+glitch pattern kick.wav -bpm 140 -steps 16 -bars 8 -o kick_loop.wav
+
+# Full beat with multiple sounds
+glitch pattern kick.wav snare.wav hat.wav -bpm 140 -steps 16 -bars 8 -swing 0.2 -o beat.wav
+```
+
+### `glitch sequence` — Probabilistic Arranger
+
+Scatters clips across a timeline with intentional gaps and clusters.
+
+```bash
+glitch sequence texture1.wav texture2.wav pad.wav -duration 60 -density 0.5 -o arrangement.wav
+```
+
+### `glitch mix` — Mix Stems
+
+Sums audio files together and normalizes.
+
+```bash
+glitch mix drums.wav bass.wav melody.wav -o mixdown.wav
+```
+
+### `glitch chain` — Multiple Passes
+
+Apply multiple micro-sampling passes in one command:
+
+```bash
+glitch chain input.wav \
+  --op microsample --slice 50 --shuffle 0.4 \
+  --op microsample --stutter 0.6 --max-repeats 8 \
+  -o out.wav
 ```
 
 ### `glitch apply` — Reuse Cut Lists
 
-Apply a saved cut list to new material:
+Apply a saved cut list to different audio (or audio+video):
 
 ```bash
-glitch apply cuts.json different_drums.wav different_frames/ -o output.mp4
-```
-
-This applies the exact same sequence of cuts (which slices, how many repeats, reversed or not) but to completely different source material.
-
----
-
-## Reproducibility
-
-Every command accepts `--seed N` (or `-seed N` for audio commands). Same seed = same result. Omit the seed for a random result each time.
-
-```bash
-# These two produce identical output:
-glitch microsample drums.wav --slice 40 --shuffle 0.5 --seed 42 -o a.wav
-glitch microsample drums.wav --slice 40 --shuffle 0.5 --seed 42 -o b.wav
-
-# This produces something different:
-glitch microsample drums.wav --slice 40 --shuffle 0.5 --seed 99 -o c.wav
-
-# This is random every time:
-glitch microsample drums.wav --slice 40 --shuffle 0.5 -o random.wav
+glitch apply cuts.json different_drums.wav -o recut.wav
+glitch apply cuts.json drums.wav frames/ -o output.mp4
 ```
 
 ---
 
-## Complete Workflow Example
+## Visual Commands
 
-Process audio first, then bond with visuals:
+### How Bonding Works
+
+When you give the tool both audio and a visual, it **bonds** them into a single unit. After that, all processing (slicing, shuffling, stuttering) applies to both in sync.
+
+The visual can be:
+1. **A still image** (`visual.png`) — the image stays on screen for the full audio duration
+2. **A folder of numbered images** (`001.png`, `002.png`, ...) — images switch at audio transients (drum hits)
+3. **A video clip** (`visual.mp4`) — trimmed or looped to match the audio length
+
+### `glitch render` — Make One Video
+
+Bond one audio file to one visual and render:
 
 ```bash
-# 1. Process the audio (Phase 1) — micro-sample and save cut list
-glitch microsample raw_break.wav --slice 40 --shuffle 0.9 --stutter 0.4 --seed 42 \
-  -o processed.wav --cutlist cuts.json
-
-# 2. Spectral processing (audio-only, no video equivalent)
-glitch spectral processed.wav -blur 0.6 -phase 0.8 --seed 42 -o smeared.wav
-
-# 3. Bond with visuals and micro-sample again (Phase 2)
-glitch render smeared.wav my_frames/ -o video.mp4 \
-  --slice 40 --shuffle 0.5 --stutter 0.3 --reverse 0.2 --seed 42 \
-  --effects rgb_split corrupt --effect-chance 0.3
-
-# Double-glitch: the audio was micro-sampled in Phase 1, then the
-# combined audiovisual gets micro-sampled again in Phase 2
+glitch render loop.wav photo.png -o output.mp4
+glitch render loop.wav frames/ -o output.mp4
+glitch render loop.wav footage.mp4 -o output.mp4
 ```
 
----
+Add glitch processing (audio and video get cut in sync):
 
-## Visual Effects Reference
+```bash
+glitch render loop.wav frames/ -o output.mp4 \
+  --shuffle 0.6 --stutter 0.3 --reverse 0.2
 
-These are applied per-frame during micro-sampling when you use `--effects`:
+# With visual effects too
+glitch render loop.wav photo.png -o output.mp4 \
+  --shuffle 0.5 --effects rgb_split scan_lines --effect-chance 0.4
+```
+
+### Visual Effects
+
+Applied per-frame during micro-sampling with `--effects`:
 
 | Effect | What it does |
 |--------|-------------|
-| `rgb_split` | Shifts R, G, B channels by random pixel offsets (chromatic aberration) |
-| `scan_lines` | Darkens alternating horizontal rows (CRT look) |
-| `corrupt` | Zeros out random rectangular blocks (data corruption) |
-| `invert_region` | Color-inverts random rectangles |
+| `rgb_split` | Shifts color channels apart (chromatic aberration) |
+| `scan_lines` | CRT-style horizontal lines |
+| `corrupt` | Random black rectangles (data corruption look) |
+| `invert_region` | Color-inverts random areas |
 | `posterize` | Reduces color depth (flat, graphic look) |
-| `noise` | Adds random noise to pixel values |
+| `noise` | Adds pixel noise |
 
 Combine multiple: `--effects rgb_split scan_lines corrupt`
 
 ---
 
-## Python API Quick Reference
+## Reproducibility
 
-```python
-# Audio micro-sampling
-from glitch import load, save, normalize, microsample, chop, chain
-from glitch.cutlist import Cut, CutList, apply_cut_list
-from glitch.spectral import smear, mangle
-from glitch.quantize import detect_bpm, quantize
-from glitch.sequence import arrange, pattern
-from glitch.mix import layer, mixdown
+Every command accepts `--seed N`. Same seed = identical output. Leave it off for random results.
 
-# AV
-from glitch.av import bond, microsample as av_microsample, apply_cut_list as av_apply, chain as av_chain, render, composite
-from glitch.av.core import AVClip
-from glitch.av.effects import rgb_split, scan_lines, corrupt, posterize, noise
+```bash
+glitch microsample drums.wav --shuffle 0.5 --seed 42 -o a.wav   # always the same
+glitch microsample drums.wav --shuffle 0.5 -o b.wav              # different every time
 ```
 
-Audio micro-sampling signature: `microsample(audio, sr, **params) -> (audio_array, CutList)`
-Spectral functions return only audio (no cut list): `smear(audio, sr, **params) -> audio_array`
-AV functions work with `AVClip` objects: `microsample(clip, **params) -> (AVClip, CutList)`
+---
+
+## Auto-Quantize (BPM Matching)
+
+When you use `glitch compose`, the tool automatically time-stretches all your loops to a common BPM. **Your original files are never modified** — stretching happens in memory only.
+
+How it picks the target BPM:
+1. If you pass `--bpm 140`, all clips stretch to 140
+2. If the manifest has a top-level `"bpm"` field, that's used
+3. If neither, it detects every clip's BPM and uses the median
+
+Per-clip `"bpm"` in the manifest overrides everything for that specific clip.
+
+---
+
+## Python API
+
+```python
+import glitch
+from glitch.av import bond, microsample, render
+
+# Audio
+audio, sr = glitch.load("drums.wav")
+processed, cut_list = glitch.microsample(audio, sr, shuffle_chance=0.6, seed=42)
+glitch.save("glitched.wav", processed, sr)
+
+# AV
+clip = bond("drums.wav", "frames/", resolution=(1920, 1080), fps=30)
+result, cut_list = microsample(clip, shuffle_chance=0.5, stutter_chance=0.3)
+render(result, "output.mp4")
+```
